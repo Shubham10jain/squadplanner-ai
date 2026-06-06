@@ -1,7 +1,8 @@
 import { useState } from "react"
 import { useNavigate } from "react-router-dom"
-import { PlaneTakeoff, Wallet, Luggage, Lock, Users } from "lucide-react"
+import { Wallet, Luggage, Lock, Users } from "lucide-react"
 import PreferenceSlider from "@/molecules/PreferenceSlider"
+import AirportSelect from "@/atoms/AirportSelect"
 
 const DEFAULT_VIBES = [
   { key: "nightlife", label: "Nightlife",         value: 50 },
@@ -67,16 +68,11 @@ const TripPreferences = () => {
                 <label className="block text-[11px] font-bold uppercase tracking-widest text-gray-400 mb-2">
                   Starting Airport
                 </label>
-                <div className="flex items-center gap-2 border border-gray-200 rounded-xl px-3 py-2.5 bg-white/60 focus-within:border-primary focus-within:ring-2 focus-within:ring-primary/20 transition-all">
-                  <PlaneTakeoff size={14} className="text-gray-400 flex-shrink-0" />
-                  <input
-                    type="text"
-                    value={airport}
-                    onChange={(e) => setAirport(e.target.value)}
-                    placeholder="e.g., JFK, London Heathrow"
-                    className="flex-1 bg-transparent text-sm text-gray-700 placeholder:text-gray-400 outline-none"
-                  />
-                </div>
+                <AirportSelect
+                  value={airport}
+                  onChange={setAirport}
+                  placeholder="Select your departure airport"
+                />
               </div>
 
               <div>
