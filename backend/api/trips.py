@@ -1,5 +1,6 @@
 """Trip creation and SSE streaming routes."""
 
+import secrets
 import uuid
 from datetime import datetime, timezone
 
@@ -25,19 +26,19 @@ class MemberRequest(BaseModel):
 
 
 class CreateTripRequest(BaseModel):
-    members: list[MemberRequest]
-    start_date: str
-    end_date: str
-    group_notes: str = ""
+    trip_name: str
+    created_by: str
+    invited_emails: list[str] = []
 
 
-def _initial_trip_state(trip_id: str, request: CreateTripRequest) -> dict:
+def _initial_trip_state(trip_id: str, trip_name: str) -> dict:
     return {
         "trip_id": trip_id,
-        "members": [member.model_dump() for member in request.members],
-        "group_notes": request.group_notes,
-        "start_date": request.start_date,
-        "end_date": request.end_date,
+        "trip_name": trip_name,
+        "members": [],
+        "group_notes": "",
+        "start_date": None,
+        "end_date": None,
         "trip_duration_days": 0,
         "preference_conflicts": [],
         "preference_constraints": {},
@@ -70,10 +71,10 @@ def _initial_trip_state(trip_id: str, request: CreateTripRequest) -> dict:
 
 
 @router.post("")
-async def create_trip(request: CreateTripRequest):
+async def create_trip(body: CreateTripRequest):
     trip_id = str(uuid.uuid4())
-    invite_code = trip_id.split("-", 1)[0].upper()
-    initial_state = _initial_trip_state(trip_id, request)
+    invite_code = secrets.token_urlsafe(8)
+    initial_state = _initial_trip_state(trip_id, body.trip_name)
     now = datetime.now(timezone.utc).isoformat()
 
     trips = get_collection("trips")
@@ -81,6 +82,9 @@ async def create_trip(request: CreateTripRequest):
         {
             "_id": trip_id,
             "trip_id": trip_id,
+            "trip_name": body.trip_name,
+            "created_by": body.created_by,
+            "invited_emails": body.invited_emails,
             "invite_code": invite_code,
             "status": "pending",
             "created_at": now,
@@ -92,7 +96,7 @@ async def create_trip(request: CreateTripRequest):
     return {
         "trip_id": trip_id,
         "invite_code": invite_code,
-        "status": "started",
+        "status": "accepted",
         "stream_url": f"/trips/{trip_id}/stream",
     }
 

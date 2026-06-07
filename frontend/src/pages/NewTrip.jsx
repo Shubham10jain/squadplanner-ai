@@ -2,11 +2,13 @@ import { useState } from "react"
 import { useNavigate, Link } from "react-router-dom"
 import { Flag } from "lucide-react"
 import SquadInviteInput from "@/molecules/SquadInviteInput"
+import { createTrip } from "@/services/ApiList"
 
 const NewTrip = () => {
   const navigate = useNavigate()
   const [tripName, setTripName] = useState("")
   const [members, setMembers] = useState([])
+  const [isLoading, setIsLoading] = useState(false)
 
   const handleAddMember = (name) => {
     if (!members.includes(name)) setMembers((prev) => [...prev, name])
@@ -16,9 +18,29 @@ const NewTrip = () => {
     setMembers((prev) => prev.filter((m) => m !== name))
   }
 
-  const handleSubmit = (e) => {
+  const handleSubmit = async (e) => {
     e.preventDefault()
-    navigate("/trips/preferences")
+    setIsLoading(true)
+
+    try {
+      const data = await createTrip({
+        trip_name: tripName,
+        // Since there is no auth yet, passing a valid dummy MongoDB ObjectId
+        created_by: "507f1f77bcf86cd799439011", 
+        invited_emails: members,
+      })
+      
+      // Store trip_id and invite_code in sessionStorage for use in the preferences page
+      sessionStorage.setItem("currentTripId", data.trip_id)
+      sessionStorage.setItem("inviteCode", data.invite_code)
+
+      navigate("/trips/preferences")
+    } catch (error) {
+      console.error("Error creating trip:", error)
+      alert("Something went wrong creating the trip.")
+    } finally {
+      setIsLoading(false)
+    }
   }
 
   return (
@@ -58,9 +80,10 @@ const NewTrip = () => {
 
           <button
             type="submit"
-            className="w-full py-3 rounded-xl bg-primary text-black font-bold text-sm flex items-center justify-center gap-2 hover:bg-primary-dim transition-colors volt-glow mt-1"
+            disabled={isLoading}
+            className="w-full py-3 rounded-xl bg-primary text-black font-bold text-sm flex items-center justify-center gap-2 hover:bg-primary-dim transition-colors volt-glow mt-1 disabled:opacity-50"
           >
-            Create Trip 🚀
+            {isLoading ? "Creating..." : "Create Trip 🚀"}
           </button>
         </form>
       </div>

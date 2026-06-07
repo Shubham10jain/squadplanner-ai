@@ -24,14 +24,10 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-app.include_router(trips.router)
-app.include_router(hitl.router)
-app.include_router(refinements.router)
-app.include_router(admin.router)
-
-debug_ui_dir = Path(__file__).parent / "debug_ui"
-if debug_ui_dir.exists():
-    app.mount("/debug", StaticFiles(directory=debug_ui_dir, html=True), name="debug-ui")
+from api import trips, hitl, admin
+app.include_router(trips.router, prefix="/api")
+app.include_router(hitl.router, prefix="/api")
+app.include_router(admin.router, prefix="/api")
 
 
 @app.on_event("startup")
