@@ -1,13 +1,11 @@
 import { createBrowserRouter } from "react-router-dom"
-import RootLayout from "@/layout/RootLayout"
 import HomeLayout from "@/layout/HomeLayout"
 import TripFlowLayout from "@/templates/TripFlowLayout"
 import Home from "@/pages/Home"
+import Auth from "@/pages/Auth"
 import NewTrip from "@/pages/NewTrip"
 import TripPreferences from "@/pages/TripPreferences"
-import Dashboard from "@/pages/Dashboard"
-
-sessionStorage.clear()
+import ProtectedRoute from "@/atoms/ProtectedRoute"
 
 const router = createBrowserRouter([
   {
@@ -17,16 +15,14 @@ const router = createBrowserRouter([
     ],
   },
   {
-    element: <TripFlowLayout />,
-    children: [
-      { path: "/trips/new",         element: <NewTrip /> },
-      { path: "/trips/preferences", element: <TripPreferences /> },
-    ],
+    path: "/auth",
+    element: <Auth />,
   },
   {
-    element: <RootLayout />,
+    element: <TripFlowLayout />,
     children: [
-      { path: "/dashboard", element: <Dashboard /> },
+      { path: "/trips/new",         element: <ProtectedRoute><NewTrip /></ProtectedRoute> },
+      { path: "/trips/preferences", element: <ProtectedRoute><TripPreferences /></ProtectedRoute> },
     ],
   },
 ])

@@ -1,7 +1,8 @@
 """State TypedDicts for the LangGraph orchestrator and itinerary subgraph."""
 
 import operator
-from typing import Annotated, NotRequired, Optional, TypedDict
+from typing import Annotated, Optional, TypedDict
+from typing_extensions import NotRequired
 
 
 class MemberInput(TypedDict):

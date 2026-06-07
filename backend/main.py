@@ -18,13 +18,15 @@ app = FastAPI(title="SquadPlanner API", version="0.1.0")
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=["http://localhost:5173", "http://localhost:5174"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
 from api import trips, hitl, admin
+from api.routes import auth
+app.include_router(auth.router, prefix="/api")
 app.include_router(trips.router, prefix="/api")
 app.include_router(hitl.router, prefix="/api")
 app.include_router(admin.router, prefix="/api")

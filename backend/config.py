@@ -35,6 +35,8 @@ class Settings(BaseSettings):
         ge=0,
         validation_alias="SERPAPI_MONTHLY_HARD_LIMIT",
     )
+    jwt_secret: str = Field(validation_alias="JWT_SECRET")
+    google_client_id: str = Field(default="", validation_alias="GOOGLE_CLIENT_ID")
 
 
 settings = Settings()

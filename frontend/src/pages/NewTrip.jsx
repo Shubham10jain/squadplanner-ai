@@ -1,5 +1,5 @@
 import { useState } from "react"
-import { useNavigate, Link } from "react-router-dom"
+import { useNavigate } from "react-router-dom"
 import { Flag } from "lucide-react"
 import SquadInviteInput from "@/molecules/SquadInviteInput"
 import { createTrip } from "@/services/ApiList"

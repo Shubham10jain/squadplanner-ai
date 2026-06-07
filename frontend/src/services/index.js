@@ -2,6 +2,7 @@ const BASE_URL = import.meta.env.VITE_API_BASE_URL ?? "http://localhost:8000/api
 
 export async function apiFetch(endpoint, options = {}) {
   const res = await fetch(`${BASE_URL}${endpoint}`, {
+    credentials: "include",
     headers: {
       "Content-Type": "application/json",
       ...options.headers,
@@ -10,7 +11,12 @@ export async function apiFetch(endpoint, options = {}) {
   })
 
   if (!res.ok) {
-    throw new Error(`API error: ${res.status} ${res.statusText}`)
+    let detail = `${res.status} ${res.statusText}`
+    try {
+      const body = await res.json()
+      if (body.detail) detail = body.detail
+    } catch {}
+    throw new Error(detail)
   }
 
   return res.json()
