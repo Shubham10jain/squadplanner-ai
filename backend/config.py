@@ -37,6 +37,8 @@ class Settings(BaseSettings):
     )
     jwt_secret: str = Field(validation_alias="JWT_SECRET")
     google_client_id: str = Field(default="", validation_alias="GOOGLE_CLIENT_ID")
+    smtp_user: str = Field(default="", validation_alias="SMTP_USER")
+    smtp_password: str = Field(default="", validation_alias="SMTP_PASSWORD")
 
 
 settings = Settings()

@@ -1,5 +1,7 @@
 """Trip creation and SSE streaming routes."""
 
+import asyncio
+import logging
 import secrets
 import uuid
 from datetime import datetime, timezone
@@ -9,7 +11,10 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
 from db.client import get_collection
+from services.email_service import send_trip_invite
 from utils.streaming import stream_graph_events
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/trips", tags=["trips"])
 
@@ -92,6 +97,16 @@ async def create_trip(body: CreateTripRequest):
             "initial_state": initial_state,
         }
     )
+
+    if body.invited_emails:
+        async def _send_invites():
+            for email in body.invited_emails:
+                try:
+                    await send_trip_invite(email, body.trip_name, invite_code)
+                except Exception as exc:
+                    logger.error("Failed to send invite to %s: %s", email, exc)
+
+        asyncio.create_task(_send_invites())
 
     return {
         "trip_id": trip_id,
