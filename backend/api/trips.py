@@ -4,7 +4,8 @@ import asyncio
 import logging
 import secrets
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
+from typing import Literal
 
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import StreamingResponse
@@ -33,7 +34,21 @@ class MemberRequest(BaseModel):
 class CreateTripRequest(BaseModel):
     trip_name: str
     created_by: str
-    invited_emails: list[str] = []
+    invited_emails: list[str] = Field(default_factory=list)
+
+
+class InvitedMember(BaseModel):
+    email: str
+    status: Literal["pending", "accepted", "declined"] = "pending"
+
+
+class TripDetailsResponse(BaseModel):
+    trip_id: str
+    trip_name: str
+    invite_code: str
+    created_at: str
+    expires_at: str
+    invited_members: list[InvitedMember]
 
 
 def _initial_trip_state(trip_id: str, trip_name: str) -> dict:
@@ -75,6 +90,36 @@ def _initial_trip_state(trip_id: str, trip_name: str) -> dict:
     }
 
 
+def _parse_datetime(value: datetime | str) -> datetime:
+    if isinstance(value, datetime):
+        return value
+    return datetime.fromisoformat(value.replace("Z", "+00:00"))
+
+
+def _isoformat(value: datetime | str) -> str:
+    if isinstance(value, datetime):
+        return value.isoformat()
+    return value
+
+
+def _invited_members_from_trip(trip: dict) -> list[dict[str, str]]:
+    invited_members = trip.get("invited_members")
+    if isinstance(invited_members, list):
+        return [
+            {
+                "email": member.get("email", ""),
+                "status": member.get("status", "pending"),
+            }
+            for member in invited_members
+            if isinstance(member, dict) and member.get("email")
+        ]
+
+    return [
+        {"email": email, "status": "pending"}
+        for email in trip.get("invited_emails", [])
+    ]
+
+
 @router.post("")
 async def create_trip(body: CreateTripRequest):
     trip_id = str(uuid.uuid4())
@@ -90,6 +135,10 @@ async def create_trip(body: CreateTripRequest):
             "trip_name": body.trip_name,
             "created_by": body.created_by,
             "invited_emails": body.invited_emails,
+            "invited_members": [
+                {"email": email, "status": "pending"}
+                for email in body.invited_emails
+            ],
             "invite_code": invite_code,
             "status": "pending",
             "created_at": now,
@@ -116,13 +165,30 @@ async def create_trip(body: CreateTripRequest):
     }
 
 
-@router.get("/{trip_id}")
+@router.get("/{trip_id}", response_model=TripDetailsResponse)
 async def get_trip(trip_id: str):
     trips = get_collection("trips")
     trip = await trips.find_one({"trip_id": trip_id}, {"_id": 0})
     if not trip:
         raise HTTPException(status_code=404, detail="Trip not found")
-    return trip
+
+    invited_members = _invited_members_from_trip(trip)
+    if "invited_members" not in trip:
+        await trips.update_one(
+            {"trip_id": trip_id},
+            {"$set": {"invited_members": invited_members}},
+        )
+
+    created_at = trip["created_at"]
+    expires_at = _parse_datetime(created_at) + timedelta(hours=24)
+    return {
+        "trip_id": trip["trip_id"],
+        "trip_name": trip["trip_name"],
+        "invite_code": trip["invite_code"],
+        "created_at": _isoformat(created_at),
+        "expires_at": expires_at.isoformat(),
+        "invited_members": invited_members,
+    }
 
 
 @router.get("/{trip_id}/stream")

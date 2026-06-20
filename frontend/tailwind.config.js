@@ -28,6 +28,7 @@ export default {
         "on-secondary": "var(--on-secondary)",
         "on-tertiary":  "var(--on-tertiary)",
         "on-surface":   "var(--on-surface)",
+        "on-secondary-fixed-variant": "var(--on-secondary-fixed-variant)",
         /* Surfaces */
         background:  "var(--background)",
         surface: {

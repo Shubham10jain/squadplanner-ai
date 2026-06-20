@@ -34,7 +34,7 @@ const NewTrip = () => {
       sessionStorage.setItem("currentTripId", data.trip_id)
       sessionStorage.setItem("inviteCode", data.invite_code)
 
-      navigate("/trips/preferences")
+      navigate("/trips/invites-sent")
     } catch (error) {
       console.error("Error creating trip:", error)
       alert("Something went wrong creating the trip.")

@@ -18,6 +18,7 @@
     --secondary-container:      #334155;
     --secondary-fixed:          #d7eb97;
     --secondary-fixed-dim:      #bbcf7e;
+    --on-secondary-fixed-variant: #3d4c08;
     --on-secondary:             #ffffff;
     --on-secondary-container:   #f1f5f9;
 
@@ -101,6 +102,7 @@
     --surface-container-high:   #263347;
     --surface-container-highest:#2d3c52;
     --surface-variant:          rgba(30, 42, 58, 0.7);
+    --on-secondary-fixed-variant: #1e293b;
     --on-background:            #f1f5f9;
     --on-surface:               #f1f5f9;
     --on-surface-variant:       #94a3b8;

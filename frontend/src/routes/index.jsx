@@ -4,6 +4,7 @@ import TripFlowLayout from "@/templates/TripFlowLayout"
 import Home from "@/pages/Home"
 import Auth from "@/pages/Auth"
 import NewTrip from "@/pages/NewTrip"
+import InvitesSent from "@/pages/InvitesSent"
 import TripPreferences from "@/pages/TripPreferences"
 import ProtectedRoute from "@/atoms/ProtectedRoute"
 
@@ -21,8 +22,9 @@ const router = createBrowserRouter([
   {
     element: <TripFlowLayout />,
     children: [
-      { path: "/trips/new",         element: <ProtectedRoute><NewTrip /></ProtectedRoute> },
-      { path: "/trips/preferences", element: <ProtectedRoute><TripPreferences /></ProtectedRoute> },
+      { path: "/trips/new",          element: <ProtectedRoute><NewTrip /></ProtectedRoute> },
+      { path: "/trips/invites-sent", element: <ProtectedRoute><InvitesSent /></ProtectedRoute> },
+      { path: "/trips/preferences",  element: <ProtectedRoute><TripPreferences /></ProtectedRoute> },
     ],
   },
 ])
