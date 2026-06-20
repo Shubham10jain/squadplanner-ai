@@ -7,6 +7,7 @@ import NewTrip from "@/pages/NewTrip"
 import InvitesSent from "@/pages/InvitesSent"
 import TripPreferences from "@/pages/TripPreferences"
 import TripLobby from "@/pages/TripLobby"
+import MyTrips from "@/pages/MyTrips"
 import ProtectedRoute from "@/atoms/ProtectedRoute"
 
 const router = createBrowserRouter([
@@ -14,6 +15,7 @@ const router = createBrowserRouter([
     element: <HomeLayout />,
     children: [
       { path: "/", element: <Home /> },
+      { path: "/mytrips", element: <ProtectedRoute><MyTrips /></ProtectedRoute> },
     ],
   },
   {

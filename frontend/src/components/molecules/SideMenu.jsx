@@ -15,7 +15,7 @@ import Logo from "@/atoms/Logo"
 
 const navItems = [
   { label: "Home",         icon: LayoutDashboard, to: "/" },
-  { label: "My Trips",     icon: Map,             to: "/trips" },
+  { label: "My Trips",     icon: Map,             to: "/mytrips" },
   { label: "Explore",      icon: Compass,         to: "/explore" },
   { label: "Shared Trips", icon: Users,           to: "/shared" },
   { label: "Help",         icon: HelpCircle,      to: "/help" },

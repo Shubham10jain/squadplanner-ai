@@ -1,11 +1,12 @@
 import { Outlet } from "react-router-dom"
 import { Toaster } from "sonner"
+import HomeHeader from "@/organisms/HomeHeader"
 
 const HomeLayout = () => (
   <>
     {/* Background: light base + volt green blob top-left + soft pink blob top-right */}
     <div
-      className="min-h-screen font-sans"
+      className="h-screen font-sans flex flex-col overflow-hidden"
       style={{
         background: `
           radial-gradient(ellipse at 4% 8%,  rgba(209,249,77,0.18) 0%, transparent 40%),
@@ -15,6 +16,7 @@ const HomeLayout = () => (
         `,
       }}
     >
+      <HomeHeader />
       <Outlet />
     </div>
     <Toaster

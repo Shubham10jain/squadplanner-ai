@@ -165,6 +165,45 @@ async def create_trip(body: CreateTripRequest):
         "status": "accepted",
         "stream_url": f"/trips/{trip_id}/stream",
     }
+@router.get("")
+async def list_trips(email: str | None = None, created_by: str | None = None):
+    trips_col = get_collection("trips")
+    query = {}
+    
+    if email or created_by:
+        or_conditions = []
+        if email:
+            or_conditions.append({"invited_emails": email})
+            or_conditions.append({"invited_members.email": email})
+            or_conditions.append({"created_by": email})
+        if created_by:
+            or_conditions.append({"created_by": created_by})
+        query["$or"] = or_conditions
+
+    cursor = trips_col.find(query).sort("created_at", -1)
+    results = []
+    async for doc in cursor:
+        initial_state = doc.get("initial_state", {})
+        
+        invited_members = doc.get("invited_members", [])
+        if not invited_members:
+            invited_members = [{"email": e, "status": "pending"} for e in doc.get("invited_emails", [])]
+            
+        start_date = initial_state.get("start_date")
+        end_date = initial_state.get("end_date")
+        
+        results.append({
+            "trip_id": doc["trip_id"],
+            "trip_name": doc["trip_name"],
+            "invite_code": doc["invite_code"],
+            "status": doc.get("status", "pending"),
+            "created_at": doc["created_at"],
+            "invited_members": invited_members,
+            "start_date": start_date,
+            "end_date": end_date,
+            "selected_destination": initial_state.get("selected_destination"),
+        })
+    return results
 
 
 @router.get("/{trip_id}", response_model=TripDetailsResponse)
