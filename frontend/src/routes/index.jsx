@@ -6,6 +6,7 @@ import Auth from "@/pages/Auth"
 import NewTrip from "@/pages/NewTrip"
 import InvitesSent from "@/pages/InvitesSent"
 import TripPreferences from "@/pages/TripPreferences"
+import TripLobby from "@/pages/TripLobby"
 import ProtectedRoute from "@/atoms/ProtectedRoute"
 
 const router = createBrowserRouter([
@@ -25,6 +26,8 @@ const router = createBrowserRouter([
       { path: "/trips/new",          element: <ProtectedRoute><NewTrip /></ProtectedRoute> },
       { path: "/trips/invites-sent", element: <ProtectedRoute><InvitesSent /></ProtectedRoute> },
       { path: "/trips/preferences",  element: <ProtectedRoute><TripPreferences /></ProtectedRoute> },
+      { path: "/trips/lobby",         element: <ProtectedRoute><TripLobby /></ProtectedRoute> },
+      { path: "/trips/:tripId/lobby", element: <ProtectedRoute><TripLobby /></ProtectedRoute> },
     ],
   },
 ])

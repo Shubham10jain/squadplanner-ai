@@ -47,7 +47,12 @@ const TripPreferences = () => {
 
   const handleSubmit = (e) => {
     e.preventDefault()
-    navigate("/dashboard")
+    const tripId = sessionStorage.getItem("currentTripId")
+    if (tripId) {
+      navigate(`/trips/${tripId}/lobby`)
+    } else {
+      navigate("/dashboard")
+    }
   }
 
   // Validate form required fields (Personal Notes is optional)

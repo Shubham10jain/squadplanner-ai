@@ -40,6 +40,8 @@ class CreateTripRequest(BaseModel):
 class InvitedMember(BaseModel):
     email: str
     status: Literal["pending", "accepted", "declined"] = "pending"
+    name: str | None = None
+    avatar_url: str | None = None
 
 
 class TripDetailsResponse(BaseModel):
@@ -179,6 +181,25 @@ async def get_trip(trip_id: str):
             {"$set": {"invited_members": invited_members}},
         )
 
+    users = get_collection("users")
+    enriched_members = []
+    for member in invited_members:
+        email = member.get("email", "")
+        status = member.get("status", "pending")
+        user_doc = await users.find_one({"email": email})
+        if user_doc:
+            name = user_doc.get("name", email.split("@")[0].capitalize())
+            avatar_url = user_doc.get("avatar_url", "")
+        else:
+            name = email.split("@")[0].capitalize()
+            avatar_url = ""
+        enriched_members.append({
+            "email": email,
+            "status": status,
+            "name": name,
+            "avatar_url": avatar_url
+        })
+
     created_at = trip["created_at"]
     expires_at = _parse_datetime(created_at) + timedelta(hours=24)
     return {
@@ -187,7 +208,7 @@ async def get_trip(trip_id: str):
         "invite_code": trip["invite_code"],
         "created_at": _isoformat(created_at),
         "expires_at": expires_at.isoformat(),
-        "invited_members": invited_members,
+        "invited_members": enriched_members,
     }
 
 
