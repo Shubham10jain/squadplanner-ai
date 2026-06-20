@@ -48,6 +48,10 @@ export default {
         border:      "var(--border)",
         input:       "var(--input)",
         ring:        "var(--ring)",
+        popover: {
+          DEFAULT:   "var(--popover)",
+          foreground:"var(--popover-foreground)",
+        },
         muted: {
           DEFAULT:   "var(--muted)",
           foreground:"var(--muted-foreground)",

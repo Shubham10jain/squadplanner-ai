@@ -80,6 +80,8 @@
     --foreground:     #0f172a;
     --card:           rgba(255, 255, 255, 0.7);
     --card-foreground:#0f172a;
+    --popover:        #ffffff;
+    --popover-foreground: #0f172a;
     --border:         rgba(255, 255, 255, 0.3);
     --input:          #f0fff4;
     --ring:           #d1f94d;
@@ -115,6 +117,8 @@
     --foreground:     #f1f5f9;
     --card:           rgba(15, 23, 42, 0.7);
     --card-foreground:#f1f5f9;
+    --popover:        #1e293b;
+    --popover-foreground: #f1f5f9;
     --border:         rgba(255, 255, 255, 0.1);
     --input:          #1e2a3a;
     --muted:          #1e2a3a;
