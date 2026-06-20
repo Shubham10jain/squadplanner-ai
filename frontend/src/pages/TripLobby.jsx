@@ -215,31 +215,31 @@ const TripLobby = () => {
 
           {/* What's Next Card */}
           <section className="bg-white/40 backdrop-blur-md rounded-2xl border border-white/60 p-6 shadow-sm">
-            <h2 className="text-base font-black text-slate-900 mb-5 uppercase tracking-wider">What's Next</h2>
-            <div className="space-y-6 relative before:absolute before:left-[13px] before:top-2 before:bottom-2 before:w-0.5 before:bg-slate-200">
+            <h2 className="text-sm font-bold text-slate-900 mb-4 uppercase tracking-wider">What's Next</h2>
+            <div className="space-y-4 relative before:absolute before:left-3 before:top-2 before:bottom-2 before:w-0.5 before:bg-slate-200">
               {/* Step 1 */}
-              <div className="relative pl-10">
-                <div className="absolute left-0 top-0.5 size-7 rounded-full bg-primary flex items-center justify-center text-slate-900 shadow-sm">
-                  <Check size={16} className="font-bold" />
+              <div className="relative pl-9">
+                <div className="absolute left-0 top-0.5 size-6 rounded-full bg-primary flex items-center justify-center text-slate-900 shadow-sm">
+                  <Check size={14} className="font-bold" />
                 </div>
-                <h4 className="font-extrabold text-slate-900 text-base leading-none mb-1.5">Squad formation</h4>
-                <p className="text-sm text-slate-500 font-medium">Invite your travel buddies to the hub.</p>
+                <h4 className="font-extrabold text-slate-900 text-sm leading-none mb-1">Squad formation</h4>
+                <p className="text-[13px] text-slate-500 font-medium">Invite your travel buddies to the hub.</p>
               </div>
               {/* Step 2 */}
-              <div className="relative pl-10">
-                <div className="absolute left-0 top-0.5 size-7 rounded-full bg-primary/20 text-primary border border-primary flex items-center justify-center animate-pulse shadow-sm">
-                  <RefreshCw size={14} className="animate-spin" />
+              <div className="relative pl-9">
+                <div className="absolute left-0 top-0.5 size-6 rounded-full bg-primary/20 text-primary border border-primary flex items-center justify-center animate-pulse shadow-sm">
+                  <RefreshCw size={12} className="animate-spin" />
                 </div>
-                <h4 className="font-extrabold text-slate-900 text-base leading-none mb-1.5">Syncing vibes</h4>
-                <p className="text-sm text-slate-500 font-medium">Gathering preferences from the squad.</p>
+                <h4 className="font-extrabold text-slate-900 text-sm leading-none mb-1">Syncing vibes</h4>
+                <p className="text-[13px] text-slate-500 font-medium">Gathering preferences from the squad.</p>
               </div>
               {/* Step 3 */}
-              <div className="relative pl-10 opacity-40">
-                <div className="absolute left-0 top-0.5 size-7 rounded-full bg-slate-100 flex items-center justify-center text-slate-400 shadow-sm">
-                  <Shield size={14} />
+              <div className="relative pl-9 opacity-40">
+                <div className="absolute left-0 top-0.5 size-6 rounded-full bg-slate-100 flex items-center justify-center text-slate-400 shadow-sm">
+                  <Shield size={12} />
                 </div>
-                <h4 className="font-extrabold text-slate-900 text-base leading-none mb-1.5">Scouting destinations</h4>
-                <p className="text-sm text-slate-500 font-medium">AI picks the best spots for your group.</p>
+                <h4 className="font-extrabold text-slate-900 text-sm leading-none mb-1">Scouting destinations</h4>
+                <p className="text-[13px] text-slate-500 font-medium">AI picks the best spots for your group.</p>
               </div>
             </div>
           </section>
