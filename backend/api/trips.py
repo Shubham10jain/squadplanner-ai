@@ -166,19 +166,12 @@ async def create_trip(body: CreateTripRequest):
         "stream_url": f"/trips/{trip_id}/stream",
     }
 @router.get("")
-async def list_trips(email: str | None = None, created_by: str | None = None):
+async def list_trips(email: str | None = None):
     trips_col = get_collection("trips")
     query = {}
     
-    if email or created_by:
-        or_conditions = []
-        if email:
-            or_conditions.append({"invited_emails": email})
-            or_conditions.append({"invited_members.email": email})
-            or_conditions.append({"created_by": email})
-        if created_by:
-            or_conditions.append({"created_by": created_by})
-        query["$or"] = or_conditions
+    if email:
+        query["created_by"] = email
 
     cursor = trips_col.find(query).sort("created_at", -1)
     results = []
