@@ -3,7 +3,8 @@ import { useNavigate } from "react-router-dom"
 import { Wallet, Luggage, Lock, Users, CalendarRange, PlusCircle, Trash2 } from "lucide-react"
 import PreferenceSlider from "@/molecules/PreferenceSlider"
 import AirportSelect from "@/atoms/AirportSelect"
-import DatePicker from "@/atoms/DatePicker"
+import { DatePicker, ConfigProvider } from "antd"
+import dayjs from "dayjs"
 
 const DEFAULT_VIBES = [
   { key: "nightlife", label: "Nightlife", value: 50 },
@@ -39,9 +40,11 @@ const TripPreferences = () => {
     setDateWindows((prev) => prev.filter((_, i) => i !== index))
   }
 
-  const updateDateWindow = (index, field, value) => {
+  const updateDateWindowRange = (index, startDateStr, endDateStr) => {
     setDateWindows((prev) =>
-      prev.map((d, i) => (i === index ? { ...d, [field]: value } : d))
+      prev.map((d, i) =>
+        i === index ? { ...d, start_date: startDateStr || "", end_date: endDateStr || "" } : d
+      )
     )
   }
 
@@ -98,54 +101,73 @@ const TripPreferences = () => {
             </section>
 
             {/* Date Windows */}
-            <section className="bg-white/40 backdrop-blur-md rounded-2xl border border-white/60 p-6 shadow-sm">
-              <h2 className="text-lg font-black text-gray-800 italic flex items-center gap-2 mb-5">
-                <CalendarRange size={20} className="text-primary" />
-                Date Windows
-              </h2>
+            <ConfigProvider
+              theme={{
+                token: {
+                  colorPrimary: "#0f172a", // Slate for active selected cell background
+                  borderRadius: 12,
+                  fontFamily: "Geist Variable, Inter, sans-serif",
+                  colorBgContainer: "rgba(255, 255, 255, 0.6)",
+                  colorBorder: "rgba(226, 232, 240, 0.8)",
+                  colorTextPlaceholder: "#94a3b8",
+                  controlHeight: 44, // Match our custom input height
+                },
+                components: {
+                  DatePicker: {
+                    activeBorderColor: "#afd528",
+                    hoverBorderColor: "#d1f94d",
+                    cellActiveWithRangeBg: "rgba(209, 249, 77, 0.2)",
+                    cellHoverWithRangeBg: "rgba(209, 249, 77, 0.1)",
+                  }
+                }
+              }}
+            >
+              <section className="bg-white/40 backdrop-blur-md rounded-2xl border border-white/60 p-6 shadow-sm">
+                <h2 className="text-lg font-black text-gray-800 italic flex items-center gap-2 mb-5">
+                  <CalendarRange size={20} className="text-primary" />
+                  Date Windows
+                </h2>
 
-              {/* Scrollable date window list */}
-              <div className="space-y-3 mb-4 max-h-[165px] overflow-y-auto pr-1">
-                {dateWindows.map((window, idx) => (
-                  <div key={idx} className="flex items-center gap-4 p-4 rounded-xl bg-white/40 border border-slate-200/50 shadow-sm">
-                    <div className="flex-grow grid grid-cols-2 gap-4">
-                      <div className="flex flex-col">
-                        <label className="block text-[10px] font-bold uppercase tracking-widest text-gray-400 mb-1">Start Date</label>
-                        <DatePicker
-                          value={window.start_date}
-                          onChange={(date) => updateDateWindow(idx, "start_date", date)}
-                          placeholder="Pick start date"
+                {/* Scrollable date window list */}
+                <div className="space-y-3 mb-4 max-h-[220px] overflow-y-auto pr-1">
+                  {dateWindows.map((window, idx) => (
+                    <div key={idx} className="flex items-center gap-4 p-4 rounded-xl bg-white/40 border border-slate-200/50 shadow-sm">
+                      <div className="flex-grow flex flex-col">
+                        <label className="block text-[10px] font-bold uppercase tracking-widest text-gray-400 mb-1.5">
+                          Date Range {idx + 1}
+                        </label>
+                        <DatePicker.RangePicker
+                          value={[
+                            window.start_date ? dayjs(window.start_date) : null,
+                            window.end_date ? dayjs(window.end_date) : null
+                          ]}
+                          onChange={(dates, dateStrings) => {
+                            updateDateWindowRange(idx, dateStrings[0], dateStrings[1])
+                          }}
+                          className="w-full h-11 rounded-xl border border-slate-200/50 bg-white/60 text-slate-700 hover:border-slate-300 focus-within:border-primary focus-within:ring-2 focus-within:ring-primary/20 transition-all font-semibold"
                         />
                       </div>
-                      <div className="flex flex-col">
-                        <label className="block text-[10px] font-bold uppercase tracking-widest text-gray-400 mb-1">End Date</label>
-                        <DatePicker
-                          value={window.end_date}
-                          onChange={(date) => updateDateWindow(idx, "end_date", date)}
-                          placeholder="Pick end date"
-                        />
-                      </div>
+                      <button
+                        type="button"
+                        onClick={() => removeDateWindow(idx)}
+                        className="text-slate-400 hover:text-red-500 transition-colors self-end mb-1"
+                      >
+                        <Trash2 size={18} />
+                      </button>
                     </div>
-                    <button
-                      type="button"
-                      onClick={() => removeDateWindow(idx)}
-                      className="text-slate-400 hover:text-red-500 transition-colors self-end pb-1"
-                    >
-                      <Trash2 size={18} />
-                    </button>
-                  </div>
-                ))}
-              </div>
+                  ))}
+                </div>
 
-              <button
-                type="button"
-                onClick={addDateWindow}
-                className="w-full py-4 border-2 border-dashed border-primary/45 hover:border-primary rounded-xl text-primary font-bold hover:bg-primary/5 transition-all flex items-center justify-center gap-2 text-sm"
-              >
-                <PlusCircle size={16} />
-                Add Another Date Range
-              </button>
-            </section>
+                <button
+                  type="button"
+                  onClick={addDateWindow}
+                  className="w-full py-4 border-2 border-dashed border-primary/45 hover:border-primary rounded-xl text-primary font-bold hover:bg-primary/5 transition-all flex items-center justify-center gap-2 text-sm"
+                >
+                  <PlusCircle size={16} />
+                  Add Another Date Range
+                </button>
+              </section>
+            </ConfigProvider>
 
             {/* Logistics + Personal Notes */}
             <div className="grid grid-cols-2 gap-4">

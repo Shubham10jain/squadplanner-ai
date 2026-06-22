@@ -3,8 +3,10 @@ import { useNavigate } from "react-router-dom"
 import { Flag } from "lucide-react"
 import SquadInviteInput from "@/molecules/SquadInviteInput"
 import { createTrip } from "@/services/ApiList"
+import { useAuth } from "@/store/authStore"
 
 const NewTrip = () => {
+  const { user } = useAuth()
   const navigate = useNavigate()
   const [tripName, setTripName] = useState("")
   const [members, setMembers] = useState([])
@@ -25,8 +27,7 @@ const NewTrip = () => {
     try {
       const data = await createTrip({
         trip_name: tripName,
-        // Since there is no auth yet, passing a valid dummy MongoDB ObjectId
-        created_by: "507f1f77bcf86cd799439011", 
+        created_by: user?.email || "", 
         invited_emails: members,
       })
       
