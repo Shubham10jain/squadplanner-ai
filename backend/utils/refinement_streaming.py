@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from datetime import datetime, timezone
 from typing import Any, AsyncGenerator
 
@@ -10,15 +11,51 @@ from agent.nodes.parse_refinement import (
     activity_category_to_fetch,
     build_refinement_state_patch,
     dedupe_new_activities,
+    named_place_to_fetch,
     parse_refinement_message,
 )
+from agent.nodes.refine_agent import build_agentic_state_patch, plan_refinement_agentic
 from db.client import get_collection
-from tools.google_places import fetch_activities_by_category
+from tools.google_places import fetch_activities_by_category, find_place_by_text
 from utils.streaming import _complete_payload, _get_orchestrator_graph, _stream_progress_events, format_sse_event
+
+logger = logging.getLogger(__name__)
 
 
 def _now() -> str:
     return datetime.now(timezone.utc).isoformat()
+
+
+async def _resolve_refinement(
+    message: str, state: dict
+) -> tuple[dict, dict, str, list[dict]]:
+    """Plan a refinement, returning (parsed_event, state_patch, rerun_node, extra_activities).
+
+    Tries the agentic Haiku planner first so any free-text phrasing is understood and every
+    concrete place is grounded via tools. A definitive out-of-scope verdict propagates as an
+    error; any other agent failure falls back to the deterministic regex parser so refinements
+    keep working offline / when the LLM is unavailable.
+    """
+    try:
+        plan, resolved = await plan_refinement_agentic(message, state)
+    except UnsupportedRefinement:
+        raise
+    except Exception as exc:  # noqa: BLE001 - any agent failure degrades gracefully
+        logger.warning("Agentic refinement failed (%s); falling back to regex parser", exc)
+        parsed = parse_refinement_message(message)
+        extra = await _load_extra_activities(parsed, state)
+        patch, as_node = build_refinement_state_patch(state, parsed, extra)
+        return {**parsed, "engine": "regex"}, patch, as_node, extra
+
+    patch, as_node = build_agentic_state_patch(state, plan, message, resolved)
+    parsed_event = {
+        "engine": "agentic",
+        "message": plan.get("summary") or message,
+        "intent": "agentic_refinement",
+        "rerun_from": as_node,
+        "plan": plan,
+    }
+    return parsed_event, patch, as_node, resolved
 
 
 def _nested_get(document: dict, dotted_key: str) -> Any:
@@ -31,16 +68,29 @@ def _nested_get(document: dict, dotted_key: str) -> Any:
 
 
 async def _load_extra_activities(parsed: dict, state: dict) -> list[dict]:
-    category = activity_category_to_fetch(parsed, state)
-    if not category:
-        return []
+    destination = state.get("selected_destination") or ""
+    coords = state.get("selected_destination_coords") or {"lat": 0.0, "lng": 0.0}
+    existing = list(state.get("activities", []))
+    extra: list[dict] = []
 
-    fetched = await fetch_activities_by_category(
-        destination=state.get("selected_destination") or "",
-        coords=state.get("selected_destination_coords") or {"lat": 0.0, "lng": 0.0},
-        categories=[category],
-    )
-    return dedupe_new_activities(state.get("activities", []), fetched)
+    # Pull in the exact named place a swap requested (e.g. "Sears Tower") so it actually
+    # enters the activity pool and can be matched into the rendered itinerary stops.
+    named = named_place_to_fetch(parsed, state)
+    if named:
+        place = await find_place_by_text(query=named, destination=destination, coords=coords)
+        if place:
+            extra.extend(dedupe_new_activities(existing, [dict(place)]))
+
+    category = activity_category_to_fetch(parsed, state)
+    if category:
+        fetched = await fetch_activities_by_category(
+            destination=destination,
+            coords=coords,
+            categories=[category],
+        )
+        extra.extend(dedupe_new_activities(existing + extra, fetched))
+
+    return extra
 
 
 async def _persist_refinement_complete(
@@ -112,7 +162,18 @@ async def stream_refinement_events(
 
         state = dict(snapshot.values)
         message = refinement.get("message", "")
-        parsed = refinement.get("parsed") or parse_refinement_message(message)
+
+        yield format_sse_event(
+            "REFINEMENT_STARTED",
+            {
+                "trip_id": trip_id,
+                "refinement_id": refinement_id,
+                "message": message,
+                "timestamp": _now(),
+            },
+        )
+
+        parsed, patch, as_node, extra_activities = await _resolve_refinement(message, state)
 
         await trips.update_one(
             {"trip_id": trip_id},
@@ -128,15 +189,6 @@ async def stream_refinement_events(
         )
 
         yield format_sse_event(
-            "REFINEMENT_STARTED",
-            {
-                "trip_id": trip_id,
-                "refinement_id": refinement_id,
-                "message": message,
-                "timestamp": _now(),
-            },
-        )
-        yield format_sse_event(
             "REFINEMENT_PARSED",
             {
                 "trip_id": trip_id,
@@ -146,8 +198,6 @@ async def stream_refinement_events(
             },
         )
 
-        extra_activities = await _load_extra_activities(parsed, state)
-        patch, as_node = build_refinement_state_patch(state, parsed, extra_activities)
         await graph.aupdate_state(config, patch, as_node=as_node)
 
         async for frame in _stream_progress_events(graph, None, config):

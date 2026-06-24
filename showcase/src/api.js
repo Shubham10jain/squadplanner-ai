@@ -5,10 +5,11 @@ export const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL || "http://127.0.
 
 async function readJson(response) {
   const text = await response.text();
-  const payload = text ? JSON.parse(text) : {};
+  let payload = {};
+  try { payload = text ? JSON.parse(text) : {}; } catch { /* non-JSON body */ }
   if (!response.ok) {
     const detail = payload?.detail;
-    const message = typeof detail === "string" ? detail : detail?.message || payload?.message || response.statusText;
+    const message = typeof detail === "string" ? detail : detail?.message || payload?.message || text || response.statusText;
     throw new Error(message);
   }
   return payload;
@@ -18,15 +19,26 @@ function networkErrorMessage(action) {
   return `${action} failed because the backend is not reachable at ${API_BASE_URL}. Start the FastAPI backend locally or set VITE_API_BASE_URL to your hosted API URL.`;
 }
 
+async function fetchWithTimeout(url, options = {}, timeoutMs = 35000) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    return await fetch(url, { ...options, signal: controller.signal });
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 export async function createTrip(payload) {
   try {
-    const response = await fetch(`${API_BASE_URL}/trips`, {
+    const response = await fetchWithTimeout(`${API_BASE_URL}/trips`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(payload),
     });
     return readJson(response);
   } catch (error) {
+    if (error.name === "AbortError") throw new Error(`Trip creation timed out. The backend is running but the database may be unreachable (${API_BASE_URL}).`);
     if (error instanceof TypeError) throw new Error(networkErrorMessage("Trip creation"));
     throw error;
   }

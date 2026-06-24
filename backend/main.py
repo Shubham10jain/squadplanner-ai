@@ -34,8 +34,12 @@ app.include_router(admin.router, prefix="/api")
 
 @app.on_event("startup")
 async def startup() -> None:
-    get_database()
-    logger.info("MongoDB connected (database=squadplanner).")
+    db = get_database()
+    try:
+        await db.command("ping")
+        logger.info("MongoDB connected (database=squadplanner).")
+    except Exception as exc:
+        logger.error("MongoDB connection failed: %s", exc)
 
     configure_langsmith()
     if settings.langchain_tracing_v2.lower() == "true":
@@ -54,4 +58,10 @@ async def shutdown() -> None:
 
 @app.get("/health")
 async def health():
-    return {"status": "ok", "db": "connected"}
+    db = get_database()
+    try:
+        await db.command("ping")
+        db_status = "connected"
+    except Exception:
+        db_status = "unreachable"
+    return {"status": "ok", "db": db_status}

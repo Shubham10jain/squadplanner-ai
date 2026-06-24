@@ -225,9 +225,13 @@ async def test_stream_refinement_reenters_graph_and_completes(monkeypatch):
             }
         ]
 
+    async def _force_fallback(*_args, **_kwargs):
+        raise RuntimeError("LLM unavailable in tests")
+
     monkeypatch.setattr(refinement_streaming, "_get_orchestrator_graph", _fake_graph)
     monkeypatch.setattr(refinement_streaming, "get_collection", lambda _name: trips)
     monkeypatch.setattr(refinement_streaming, "fetch_activities_by_category", _fake_fetch)
+    monkeypatch.setattr(refinement_streaming, "plan_refinement_agentic", _force_fallback)
 
     frames = [frame async for frame in refinement_streaming.stream_refinement_events("trip-1", "ref-1")]
     payloads = _sse_payloads(frames)
@@ -241,3 +245,184 @@ async def test_stream_refinement_reenters_graph_and_completes(monkeypatch):
     assert graph.patch["activities"][0]["name"] == "City Park"
     assert doc["refinements"]["ref-1"]["status"] == "complete"
     assert doc["itinerary"]["days"][0]["activities"][0]["name"] == "City Park"
+
+
+# --- Agentic (Option B) refinement planner ------------------------------------------
+
+
+from agent.nodes import refine_agent  # noqa: E402
+from agent.nodes.refine_agent import build_agentic_state_patch  # noqa: E402
+
+
+class _FakeBoundLLM:
+    def __init__(self, turns: list[list[dict]]):
+        self._turns = turns
+        self._index = 0
+
+    async def ainvoke(self, _messages):
+        turn = self._turns[self._index]
+        self._index += 1
+        return SimpleNamespace(tool_calls=turn, content="")
+
+
+class _FakeLLM:
+    def __init__(self, turns: list[list[dict]]):
+        self._turns = turns
+
+    def bind_tools(self, _tools):
+        return _FakeBoundLLM(self._turns)
+
+
+def _bean_place(**_kwargs):
+    return {
+        "place_id": "bean-1",
+        "name": "Cloud Gate (The Bean)",
+        "category": "urban",
+        "address": "Millennium Park",
+        "lat": 1.0,
+        "lng": 2.0,
+        "price_level": 0,
+        "rating": 4.8,
+        "tags": ["landmark"],
+    }
+
+
+@pytest.mark.asyncio
+async def test_agentic_plan_grounds_named_place(monkeypatch):
+    state = _state()
+    turns = [
+        [{"name": "FindPlace", "args": {"query": "The Bean"}, "id": "t1"}],
+        [
+            {
+                "name": "SubmitRefinementPlan",
+                "args": {
+                    "in_scope": True,
+                    "summary": "Add The Bean to day 1",
+                    "target_day": 1,
+                    "rerun_from": "search_hotel",
+                    "add_places": ["Cloud Gate (The Bean)"],
+                    "remove_terms": [],
+                    "preferred_categories": [],
+                },
+                "id": "t2",
+            }
+        ],
+    ]
+
+    async def _fake_find(**kwargs):
+        return _bean_place(**kwargs)
+
+    monkeypatch.setattr(refine_agent, "get_llm", lambda: _FakeLLM(turns))
+    monkeypatch.setattr(refine_agent, "find_place_by_text", _fake_find)
+
+    plan, resolved = await refine_agent.plan_refinement_agentic("I want to visit the Bean", state)
+
+    assert plan["add_places"] == ["Cloud Gate (The Bean)"]
+    assert any(activity["name"] == "Cloud Gate (The Bean)" for activity in resolved)
+
+    patch, as_node = build_agentic_state_patch(state, plan, "I want to visit the Bean", resolved)
+    assert as_node == "search_hotel"
+    assert patch["refinement_directives"]["add_place"] == ["Cloud Gate (The Bean)"]
+    assert patch["activities"][0]["name"] == "Cloud Gate (The Bean)"
+
+
+@pytest.mark.asyncio
+async def test_agentic_plan_safety_net_grounds_unlooked_place(monkeypatch):
+    """Even if the model submits an add without a prior FindPlace, code grounds it."""
+    state = _state()
+    turns = [
+        [
+            {
+                "name": "SubmitRefinementPlan",
+                "args": {
+                    "in_scope": True,
+                    "summary": "Add The Bean",
+                    "add_places": ["Cloud Gate (The Bean)"],
+                },
+                "id": "t1",
+            }
+        ]
+    ]
+    calls: list[str] = []
+
+    async def _fake_find(**kwargs):
+        calls.append(kwargs.get("query"))
+        return _bean_place(**kwargs)
+
+    monkeypatch.setattr(refine_agent, "get_llm", lambda: _FakeLLM(turns))
+    monkeypatch.setattr(refine_agent, "find_place_by_text", _fake_find)
+
+    _plan, resolved = await refine_agent.plan_refinement_agentic("add the bean", state)
+
+    assert calls == ["Cloud Gate (The Bean)"]
+    assert any(activity["name"] == "Cloud Gate (The Bean)" for activity in resolved)
+
+
+@pytest.mark.asyncio
+async def test_agentic_plan_out_of_scope_raises(monkeypatch):
+    state = _state()
+    turns = [
+        [
+            {
+                "name": "SubmitRefinementPlan",
+                "args": {
+                    "in_scope": False,
+                    "out_of_scope_reason": "Changing the destination needs a new trip.",
+                    "summary": "Destination change",
+                },
+                "id": "t1",
+            }
+        ]
+    ]
+    monkeypatch.setattr(refine_agent, "get_llm", lambda: _FakeLLM(turns))
+
+    with pytest.raises(UnsupportedRefinement):
+        await refine_agent.plan_refinement_agentic("Let's go to Miami instead", state)
+
+
+def test_build_agentic_patch_compound_request():
+    state = _state()
+    plan = {
+        "in_scope": True,
+        "summary": "Cheaper, more relaxed, add a park, drop the museum",
+        "target_day": 2,
+        "rerun_from": "search_hotel",
+        "add_places": ["City Park"],
+        "remove_terms": ["Modern Art Museum"],
+        "preferred_categories": ["outdoor"],
+        "pace": "relaxed",
+        "cost_sensitivity": "lower_cost",
+    }
+    resolved = [{"name": "City Park", "category": "outdoor", "place_id": "park-1"}]
+
+    patch, as_node = build_agentic_state_patch(state, plan, "compound", resolved)
+    directives = patch["refinement_directives"]
+
+    assert as_node == "search_hotel"
+    assert directives["add_place"] == ["City Park"]
+    assert directives["avoid_terms"] == ["Modern Art Museum"]
+    assert directives["preferred_categories"] == ["outdoor"]
+    assert directives["pace"] == "relaxed"
+    assert directives["cost_sensitivity"] == "lower_cost"
+    assert patch["budget_status"] == "moderate"
+    assert patch["preference_constraints"]["schedule"]["pace"] == "relaxed"
+    assert "outdoor" in patch["preference_constraints"]["activity_filters"]["prefer_tags"]
+    assert "modern art museum" in patch["preference_constraints"]["activity_filters"]["avoid_tags"]
+    assert patch["activities"][0]["name"] == "City Park"
+    assert patch["constraint_satisfaction"]["passed"] is None
+
+
+@pytest.mark.asyncio
+async def test_agentic_loop_falls_back_when_no_plan(monkeypatch):
+    """If the model never submits a plan, the loop raises so callers can fall back."""
+    state = _state()
+    turns = [[{"name": "FetchActivities", "args": {"category": "outdoor"}, "id": f"t{i}"}] for i in range(refine_agent.MAX_AGENT_TURNS)]
+
+    async def _fake_fetch(**_kwargs):
+        return []
+
+    monkeypatch.setattr(refine_agent, "get_llm", lambda: _FakeLLM(turns))
+    monkeypatch.setattr(refine_agent, "fetch_activities_by_category", _fake_fetch)
+
+    with pytest.raises(refine_agent.AgentPlanningError):
+        await refine_agent.plan_refinement_agentic("more outdoor stuff", state)

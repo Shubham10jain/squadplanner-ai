@@ -485,10 +485,11 @@ async def _build_route_stops_for_day(
     day: DayPlan,
     state: ItineraryState,
     activity_lookup: dict[str, ActivityResult],
-) -> tuple[list[dict], int]:
+) -> tuple[list[dict], int, list[ActivityResult]]:
     hotel = state.get("hotel") or {}
     stops: list[dict] = []
     missing = 0
+    resolved_activities: list[ActivityResult] = []
 
     hotel_stop = _hotel_route_stop(hotel, 1)
     if hotel_stop:
@@ -520,12 +521,24 @@ async def _build_route_stops_for_day(
             continue
 
         matched = _match_activity_by_name(label, activity_rows, activity_lookup)
+        if not matched and label:
+            # Fallback: resolve the named activity via Places text search so the rendered
+            # agenda matches the narrative instead of silently dropping the stop. This mirrors
+            # the meal fallback above and is what lets LLM-named or refinement-added places
+            # (e.g. "Sears Tower") surface as real stops with coordinates.
+            matched = await find_place_by_text(
+                query=label,
+                destination=state["destination"],
+                coords=state.get("destination_coords"),
+            )
+
         if matched:
             stops.append(_activity_route_stop(matched, entry, order))
+            resolved_activities.append(matched)
         else:
             missing += 1
 
-    return stops, missing
+    return stops, missing, resolved_activities
 
 
 def _coerce_activity_names(raw_activities: Any) -> list[str]:
@@ -707,7 +720,8 @@ async def build_itinerary(state: ItineraryState) -> dict:
         "- Preserve unaffected days, meals, routes, and rationale unless they conflict with the refinement or validation errors.\n"
         "- If target_day is set, focus changes on that day and keep other days as stable as possible.\n\n"
         "- If cost_sensitivity is lower_cost, prefer free or lower-price activities and meals, and lower estimated_day_cost_usd where realistic.\n"
-        "- If preferred_categories or avoid_terms are present, reflect those activity choices directly in the affected day.\n\n"
+        "- If preferred_categories or avoid_terms are present, reflect those activity choices directly in the affected day.\n"
+        "- If add_place is present in the refinement directives (it may be a single name or a list of names), you MUST add each of those exact places (verbatim names) as an activity and a schedule entry in the affected day, and remove any place named in avoid_terms.\n\n"
         f"Destination: {state['destination']}\n"
         f"Trip dates: {state['start_date']} to {state['end_date']}\n"
         f"Trip duration days: {state['trip_duration_days']}\n"
@@ -838,9 +852,20 @@ async def plan_routes(state: ItineraryState) -> dict:
                 skipped_names += 1
 
         day["activities"] = matched_activities
-        route_stops, missing_for_day = await _build_route_stops_for_day(day, state, lookup)
+        route_stops, missing_for_day, resolved_activities = await _build_route_stops_for_day(
+            day, state, lookup
+        )
         missing_stops += missing_for_day
         day["route_stops"] = route_stops
+
+        if resolved_activities:
+            existing_keys = {_normalize_name(activity.get("name", "")) for activity in matched_activities}
+            for activity in resolved_activities:
+                key = _normalize_name(activity.get("name", ""))
+                if key and key not in existing_keys:
+                    existing_keys.add(key)
+                    matched_activities.append(activity)
+            day["activities"] = matched_activities
 
         if len(route_stops) >= 2:
             route_result = await plan_stop_routes(route_stops)
@@ -873,23 +898,66 @@ async def plan_routes(state: ItineraryState) -> dict:
 
 
 def check_feasibility(state: ItineraryState) -> str:
+    """Pure router: decide whether a feasibility swap is still needed.
+
+    This MUST NOT mutate state. Conditional-edge routers in LangGraph are pure and any
+    state they mutate is discarded, which previously caused feasibility_swap_count to never
+    advance and the plan_routes -> check_feasibility loop to run until the recursion limit.
+    The actual trim + counter increment happen in apply_feasibility_swap (a node).
+    """
+    if int(state.get("feasibility_swap_count") or 0) >= 2:
+        return "pass"
+
     for day in state.get("days", []):
+        if int(day.get("total_travel_minutes", 0)) > 180 and len(day.get("activities", [])) > 1:
+            return "swap"
+
+    return "pass"
+
+
+async def apply_feasibility_swap(state: ItineraryState) -> dict:
+    """Trim one activity (and its matching non-meal stop) from the most travel-heavy day.
+
+    Performed in a node so the trimmed itinerary and the incremented swap counter are
+    actually committed to graph state, guaranteeing the feasibility loop terminates.
+    """
+    days = deepcopy(state.get("days", []))
+    trimmed_day: Any = None
+
+    for day in days:
         if int(day.get("total_travel_minutes", 0)) <= 180:
             continue
-
-        if int(state.get("feasibility_swap_count") or 0) >= 2:
-            continue
-
         activities = list(day.get("activities", []))
         if len(activities) <= 1:
             continue
 
         activities.pop()
         day["activities"] = activities
-        state["feasibility_swap_count"] = int(state.get("feasibility_swap_count") or 0) + 1
-        return "swap"
 
-    return "pass"
+        schedule = list(day.get("schedule", []))
+        for index in range(len(schedule) - 1, -1, -1):
+            if not _is_meal_entry(schedule[index]):
+                schedule.pop(index)
+                break
+        day["schedule"] = schedule
+
+        trimmed_day = day.get("day_number")
+        break
+
+    swap_count = int(state.get("feasibility_swap_count") or 0) + 1
+    return {
+        "days": days,
+        "feasibility_swap_count": swap_count,
+        "decision_log": [
+            _decision(
+                "apply_feasibility_swap",
+                f"Trimmed an activity from day {trimmed_day} to reduce travel time"
+                if trimmed_day is not None
+                else "No feasible swap target found",
+                f"Feasibility swap count: {swap_count}",
+            )
+        ],
+    }
 
 
 async def validation_gate(state: ItineraryState) -> dict:
@@ -1039,6 +1107,7 @@ graph.add_node("cluster_by_neighborhood", cluster_by_neighborhood)
 graph.add_node("build_itinerary", build_itinerary)
 graph.add_node("align_flight_times", align_flight_times)
 graph.add_node("plan_routes", plan_routes)
+graph.add_node("apply_feasibility_swap", apply_feasibility_swap)
 graph.add_node("validation_gate", validation_gate)
 
 graph.set_entry_point("cluster_by_neighborhood")
@@ -1048,8 +1117,9 @@ graph.add_edge("align_flight_times", "plan_routes")
 graph.add_conditional_edges(
     "plan_routes",
     check_feasibility,
-    {"swap": "plan_routes", "pass": "validation_gate"},
+    {"swap": "apply_feasibility_swap", "pass": "validation_gate"},
 )
+graph.add_edge("apply_feasibility_swap", "plan_routes")
 graph.add_conditional_edges(
     "validation_gate",
     check_validation,
