@@ -1,5 +1,6 @@
 """Motor async MongoDB client singleton."""
 
+import certifi
 from motor.motor_asyncio import AsyncIOMotorClient, AsyncIOMotorCollection, AsyncIOMotorDatabase
 
 from config import settings
@@ -13,7 +14,7 @@ def get_database() -> AsyncIOMotorDatabase:
     global _client, _db
     if _db is not None:
         return _db
-    _client = AsyncIOMotorClient(settings.mongodb_uri)
+    _client = AsyncIOMotorClient(settings.mongodb_uri, tlsCAFile=certifi.where())
     _db = _client["squadplanner"]
     return _db
 

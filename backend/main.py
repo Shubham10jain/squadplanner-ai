@@ -41,6 +41,17 @@ async def startup() -> None:
     except Exception as exc:
         logger.error("MongoDB connection failed: %s", exc)
 
+    # Drop the unused duplicate key index google_id_1 if it exists
+    try:
+        users_col = db["users"]
+        indexes = await users_col.index_information()
+        if "google_id_1" in indexes:
+            logger.info("Unused index google_id_1 found. Dropping it...")
+            await users_col.drop_index("google_id_1")
+            logger.info("Unused index google_id_1 successfully dropped.")
+    except Exception as e:
+        logger.error("Failed to check/drop google_id_1 index: %s", e)
+
     configure_langsmith()
     if settings.langchain_tracing_v2.lower() == "true":
         logger.info("LangSmith tracing enabled (project=%s).", settings.langchain_project)
