@@ -99,21 +99,45 @@ def parse_refinement_message(message: str) -> dict:
             },
         )
 
-    activity_to_replace = _extract_activity_to_replace(text)
-    if activity_to_replace:
+    activity_to_replace, activity_to_add = _extract_swap(text)
+    if activity_to_add and not _is_specific_place(activity_to_add):
+        # e.g. "swap the museum for something outdoors" is a category swap, not a
+        # request for a specific venue, so let the category-fetch path handle it.
+        activity_to_add = None
+    if activity_to_replace or activity_to_add:
         preferred_categories = [category] if category else []
+        directives: dict[str, Any] = {
+            "preferred_categories": preferred_categories,
+            "preserve_unaffected_days": True,
+        }
+        if activity_to_replace:
+            directives["avoid_terms"] = [activity_to_replace]
+        if activity_to_add:
+            directives["add_place"] = activity_to_add
         return _result(
             original,
             "swap_activity",
             "search_hotel",
             day_number=day_number,
             target="itinerary",
+            directives=directives,
+            requires_activity_category=category,
+            requires_named_place=activity_to_add,
+        )
+
+    activity_to_add = _extract_activity_to_add(text)
+    if activity_to_add and _is_specific_place(activity_to_add):
+        return _result(
+            original,
+            "add_activity",
+            "search_hotel",
+            day_number=day_number,
+            target="itinerary",
             directives={
-                "avoid_terms": [activity_to_replace],
-                "preferred_categories": preferred_categories,
+                "add_place": activity_to_add,
                 "preserve_unaffected_days": True,
             },
-            requires_activity_category=category,
+            requires_named_place=activity_to_add,
         )
 
     if _contains_any(text, ("avoid", "remove", "skip", "no more", "without")):
@@ -184,7 +208,8 @@ def parse_refinement_message(message: str) -> dict:
         )
 
     raise UnsupportedRefinement(
-        "V1 refinements support cheaper plans, activity swaps, outdoor/category preferences, pace changes, meal edits, and pitch wording.",
+        "V1 refinements support cheaper plans, adding a specific place, activity swaps, "
+        "outdoor/category preferences, pace changes, meal edits, and pitch wording.",
     )
 
 
@@ -202,6 +227,31 @@ def activity_category_to_fetch(parsed: dict, state: dict) -> str | None:
     if existing:
         return None
     return str(category)
+
+
+def named_place_to_fetch(parsed: dict, state: dict) -> str | None:
+    """Return a specific place name (e.g. "Sears Tower") that must be fetched and added.
+
+    Returns ``None`` when no named place was requested or when the requested place is
+    already present in the activity pool, so refinement swaps actually pull in the exact
+    place the user asked for instead of silently dropping it.
+    """
+    name = parsed.get("requires_named_place")
+    normalized = _activity_key({"name": name}) if name else ""
+    if not normalized:
+        return None
+
+    for activity in state.get("activities", []):
+        existing = _activity_key({"name": activity.get("name", "")})
+        existing_name = existing.split(":", 1)[-1].strip()
+        target_name = normalized.split(":", 1)[-1].strip()
+        if existing_name and target_name and (
+            existing_name == target_name
+            or target_name in existing_name
+            or existing_name in target_name
+        ):
+            return None
+    return str(name)
 
 
 def dedupe_new_activities(existing: list[dict], candidates: list[dict]) -> list[dict]:
@@ -251,7 +301,7 @@ def build_refinement_state_patch(
     if intent in {"swap_activity", "avoid_activity", "prefer_activity_category", "change_pace", "meal_requirement"}:
         patch["preference_constraints"] = _patched_constraints(state.get("preference_constraints", {}), parsed)
 
-    if intent in {"cheaper_day", "swap_activity", "avoid_activity", "prefer_activity_category", "change_pace", "meal_requirement"}:
+    if intent in {"cheaper_day", "swap_activity", "add_activity", "avoid_activity", "prefer_activity_category", "change_pace", "meal_requirement"}:
         patch["constraint_satisfaction"] = {"passed": None, "satisfied": [], "unmet": [], "warnings": []}
 
     if extra_activities:
@@ -275,6 +325,7 @@ def _result(
     target: str,
     directives: dict,
     requires_activity_category: str | None = None,
+    requires_named_place: str | None = None,
 ) -> dict:
     return {
         "message": message,
@@ -288,6 +339,7 @@ def _result(
         },
         "rerun_from": rerun_from,
         "requires_activity_category": requires_activity_category,
+        "requires_named_place": requires_named_place,
     }
 
 
@@ -331,11 +383,113 @@ def _extract_cuisine(text: str) -> str | None:
     return None
 
 
-def _extract_activity_to_replace(text: str) -> str | None:
-    match = re.search(r"\b(?:swap|replace)\s+(?:the\s+|a\s+|an\s+)?(?P<activity>[a-z0-9 '&-]+?)\s+(?:for|with)\b", text)
+def _extract_swap(text: str) -> tuple[str | None, str | None]:
+    """Return (place_to_remove, place_to_add) for swap-style refinements.
+
+    Handles "swap/replace/switch A for/with B" and "B instead of A" so the specific
+    requested place is captured (not just the one being removed).
+    """
+    stop = (
+        r"(?=\s+(?:on|in|for|if|please|during|this|next|that|day|sometime|someday|somewhere)\b|[.,!?]|$)"
+    )
+
+    match = re.search(
+        r"\b(?:swap|replace|switch)\s+(?:out\s+)?(?:the\s+|a\s+|an\s+)?"
+        r"(?P<remove>[a-z0-9 '&-]+?)\s+(?:for|with|to)\s+(?:the\s+|a\s+|an\s+)?"
+        r"(?P<add>[a-z0-9 '&-]+?)" + stop,
+        text,
+    )
+    if match:
+        return _clean_term(match.group("remove")), _clean_place_name(match.group("add"))
+
+    match = re.search(
+        r"(?P<add>[a-z0-9 '&-]+?)\s+instead\s+of\s+(?:the\s+|a\s+|an\s+)?"
+        r"(?P<remove>[a-z0-9 '&-]+?)" + stop,
+        text,
+    )
+    if match:
+        add_raw = match.group("add")
+        # The "add" side often carries filler like "I want to visit X on day 1"; isolate
+        # the actual place using the add-verb extractor and fall back to a plain clean.
+        add_place = _extract_activity_to_add(add_raw) or _clean_place_name(add_raw)
+        return _clean_term(match.group("remove")), add_place
+
+    return None, None
+
+
+_GENERIC_PLACE_WORDS = {
+    "something",
+    "anything",
+    "somewhere",
+    "anywhere",
+    "else",
+    "different",
+    "more",
+    "some",
+    "any",
+    "few",
+    "another",
+    "activity",
+    "activities",
+    "place",
+    "places",
+    "option",
+    "options",
+    "spot",
+    "spots",
+    "thing",
+    "things",
+    "fun",
+    "outdoors",
+}
+
+
+def _is_specific_place(name: str) -> bool:
+    """True only when the phrase names a concrete venue rather than a vague category.
+
+    "something outdoors" / "a park" are generic (fetch by category), while "Sears Tower"
+    or "Millennium Park" are specific (fetch the exact place by name).
+    """
+    words = [word for word in re.split(r"\s+", str(name or "").lower()) if word]
+    if not words:
+        return False
+    if any(word in _GENERIC_PLACE_WORDS for word in words):
+        return False
+
+    generic = set(_GENERIC_PLACE_WORDS)
+    for aliases in CATEGORY_ALIASES.values():
+        generic.update(aliases)
+    return not all(word in generic for word in words)
+
+
+def _extract_activity_to_add(text: str) -> str | None:
+    """Capture a specific place to ADD from phrasings like "visit/add/include X".
+
+    Stops the place capture at trailing scheduling/filler words ("on day 1", "if you can
+    accommodate it", etc.) so only the venue name is returned.
+    """
+    match = re.search(
+        r"\b(?:add|include|visit|see|go\s+to|stop\s+by|check\s+out)\s+"
+        r"(?:the\s+|a\s+|an\s+)?(?P<place>[a-z0-9 '&-]+?)"
+        r"(?=\s+(?:on|in|for|to|instead|if|please|during|this|next|that|day|sometime|someday|somewhere)\b|[.,!?]|$)",
+        text,
+    )
     if not match:
         return None
-    return _clean_term(match.group("activity"))
+    return _clean_place_name(match.group("place"))
+
+
+def _clean_place_name(term: str) -> str:
+    """Clean a proper-noun place name while stripping leading verbs/articles."""
+    cleaned = str(term or "").strip()
+    cleaned = re.sub(
+        r"^(?:please\s+|just\s+)?(?:visit|go\s+to|go|see|do|add|include|put|have|book|check\s+out)\s+",
+        "",
+        cleaned,
+    )
+    cleaned = re.sub(r"^(?:the|a|an)\s+", "", cleaned)
+    cleaned = re.sub(r"\s+", " ", cleaned).strip(" .,'\"")
+    return cleaned
 
 
 def _extract_avoid_term(text: str) -> str | None:

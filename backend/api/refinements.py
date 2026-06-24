@@ -13,6 +13,15 @@ from utils.refinement_streaming import stream_refinement_events
 
 router = APIRouter(prefix="/trips", tags=["refinements"])
 
+# Only reject up front for requests that definitively need a brand-new trip. Everything else
+# (including unusual phrasing) is handed to the agentic planner during streaming.
+_HARD_SCOPE_CODES = {
+    "empty_refinement",
+    "unsupported_member_change",
+    "unsupported_date_change",
+    "unsupported_destination_change",
+}
+
 
 class RefineTripRequest(BaseModel):
     message: str = Field(min_length=1, max_length=1000)
@@ -31,10 +40,14 @@ async def refine_trip(trip_id: str, body: RefineTripRequest):
     if not trip.get("final_state") or not trip.get("trip_pitch"):
         raise HTTPException(status_code=409, detail="Trip must complete before it can be refined")
 
+    # Fast-fail only for clearly out-of-scope requests; the agentic planner (run during
+    # streaming, with full itinerary context) interprets everything else, including free text
+    # the regex parser would not recognize.
     try:
-        parsed = parse_refinement_message(body.message)
+        parse_refinement_message(body.message)
     except UnsupportedRefinement as exc:
-        raise HTTPException(status_code=422, detail={"message": str(exc), "code": exc.code}) from exc
+        if exc.code in _HARD_SCOPE_CODES:
+            raise HTTPException(status_code=422, detail={"message": str(exc), "code": exc.code}) from exc
 
     refinement_id = str(uuid.uuid4())
     now = _now()
@@ -45,7 +58,6 @@ async def refine_trip(trip_id: str, body: RefineTripRequest):
                 f"refinements.{refinement_id}": {
                     "refinement_id": refinement_id,
                     "message": body.message.strip(),
-                    "parsed": parsed,
                     "status": "queued",
                     "created_at": now,
                 },

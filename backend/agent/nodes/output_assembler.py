@@ -2,11 +2,16 @@
 
 import asyncio
 import json
+import logging
+import re
+from copy import deepcopy
 from datetime import datetime, timezone
 from typing import Any
 
 from agent.state import DecisionLogEntry, TripState
 from config import get_llm, settings
+
+logger = logging.getLogger(__name__)
 
 
 def _message_text(response: Any) -> str:
@@ -14,6 +19,16 @@ def _message_text(response: Any) -> str:
     if isinstance(content, list):
         return "".join(str(part.get("text", part)) if isinstance(part, dict) else str(part) for part in content)
     return str(content)
+
+
+def _strip_json_fences(text: str) -> str:
+    cleaned = str(text or "").strip()
+    fence_match = re.fullmatch(r"```(?:json)?\s*(.*?)\s*```", cleaned, flags=re.DOTALL | re.IGNORECASE)
+    if fence_match:
+        cleaned = fence_match.group(1).strip()
+    if not cleaned.startswith("{") and "{" in cleaned and "}" in cleaned:
+        cleaned = cleaned[cleaned.find("{") : cleaned.rfind("}") + 1]
+    return cleaned
 
 
 def _destination_details(state: TripState) -> tuple[str, str]:
@@ -24,15 +39,42 @@ def _destination_details(state: TripState) -> tuple[str, str]:
     return selected, ""
 
 
+def _confirmed_stops(day: dict) -> list[dict]:
+    """Return the stops that actually rendered into the itinerary, as the single source
+    of truth for any narrative copy. Falls back to activities/meals only when route stops
+    are unavailable."""
+    route_stops = sorted(
+        day.get("route_stops", []) or [],
+        key=lambda stop: int(stop.get("order", 0) or 0),
+    )
+    if route_stops:
+        return [
+            {
+                "time": stop.get("time") or ("Base" if stop.get("type") == "hotel" else ""),
+                "type": "meal" if stop.get("type") == "restaurant" else stop.get("type") or "activity",
+                "label": stop.get("label") or "Stop",
+            }
+            for stop in route_stops
+            if stop.get("label")
+        ]
+
+    fallback = [
+        {"time": "", "type": "activity", "label": activity.get("name")}
+        for activity in day.get("activities", [])
+        if activity.get("name")
+    ]
+    fallback.extend(
+        {"time": "", "type": "meal", "label": meal} for meal in day.get("meals", []) if meal
+    )
+    return fallback
+
+
 def _days_summary(state: TripState) -> list[dict]:
     return [
         {
             "day_number": day.get("day_number"),
             "neighborhood": day.get("neighborhood"),
-            "activities": [activity.get("name") for activity in day.get("activities", [])],
-            "meals": day.get("meals", []),
-            "schedule": day.get("schedule", []),
-            "rationale": day.get("rationale", ""),
+            "stops": _confirmed_stops(day),
             "constraint_notes": day.get("constraint_notes", []),
         }
         for day in state.get("days", [])
@@ -42,22 +84,63 @@ def _days_summary(state: TripState) -> list[dict]:
 def _readable_days_summary(days: list[dict]) -> str:
     lines = []
     for day in days:
-        activities = ", ".join(day.get("activities", [])) or "No activities planned"
-        meals = ", ".join(day.get("meals", [])) or "No meals planned"
-        schedule = ", ".join(
-            f"{entry.get('time')} {entry.get('label')}"
-            for entry in day.get("schedule", [])
-            if entry.get("time") and entry.get("label")
+        stops = day.get("stops", [])
+        stop_text = "; ".join(
+            f"{stop.get('time') or '--'} {stop.get('label')} ({stop.get('type')})".strip()
+            for stop in stops
+            if stop.get("label")
         )
         lines.append(
             f"Day {day.get('day_number')}: {day.get('neighborhood', 'Neighborhood TBD')}\n"
-            f"  Activities: {activities}\n"
-            f"  Meals: {meals}\n"
-            f"  Schedule: {schedule or 'Schedule metadata unavailable'}\n"
-            f"  Rationale: {day.get('rationale') or 'Unavailable'}\n"
-            f"  Constraint notes: {', '.join(day.get('constraint_notes', [])) or 'None'}"
+            f"  Confirmed stops (the ONLY places you may mention for this day): "
+            f"{stop_text or 'No confirmed stops'}"
         )
     return "\n".join(lines)
+
+
+def _apply_grounded_narrative(state: TripState, raw_text: str) -> tuple[str, list[dict] | None]:
+    """Parse the grounded JSON narrative. Returns (pitch, updated_days_or_None).
+
+    On any parse failure we treat the model output as a plain-text pitch and leave the
+    existing day rationales untouched, so the node degrades gracefully.
+    """
+    try:
+        parsed = json.loads(_strip_json_fences(raw_text))
+    except (json.JSONDecodeError, ValueError):
+        return raw_text.strip(), None
+
+    if not isinstance(parsed, dict):
+        return raw_text.strip(), None
+
+    pitch = str(parsed.get("pitch") or "").strip() or raw_text.strip()
+
+    day_overrides: dict[int, dict] = {}
+    for entry in parsed.get("days", []) or []:
+        if not isinstance(entry, dict) or entry.get("day_number") is None:
+            continue
+        try:
+            day_overrides[int(entry["day_number"])] = entry
+        except (TypeError, ValueError):
+            continue
+
+    if not day_overrides:
+        return pitch, None
+
+    updated_days = deepcopy(state.get("days", []))
+    for day in updated_days:
+        override = day_overrides.get(int(day.get("day_number", 0)))
+        if not override:
+            continue
+        rationale = str(override.get("rationale") or "").strip()
+        if rationale:
+            day["rationale"] = rationale
+        notes = override.get("constraint_notes")
+        if isinstance(notes, list):
+            cleaned_notes = [str(note).strip() for note in notes if str(note).strip()]
+            if cleaned_notes:
+                day["constraint_notes"] = cleaned_notes
+
+    return pitch, updated_days
 
 
 async def assemble_output(state: TripState) -> dict:
@@ -73,19 +156,29 @@ async def assemble_output(state: TripState) -> dict:
 
     if days:
         prompt = (
-            "Generate a trip pitch written to sell this trip to the group.\n"
-            "Write exactly 4 paragraphs. Do not shorten this. Minimum 80 words per paragraph.\n"
-            "Paragraph 1: destination overview and why it fits this group.\n"
-            "Paragraph 2: highlights from the itinerary, naming specific days and activities.\n"
-            "Paragraph 3: logistics including hotel, weather, and what to expect.\n"
-            "Paragraph 4: closing hype.\n\n"
+            "You are finalizing a group trip. Using ONLY the confirmed itinerary stops listed below, "
+            "write marketing copy AND per-day descriptions. This is critical: you must NEVER mention a "
+            "place, activity, or venue that is not in that day's confirmed stops. Do not reference removed, "
+            "dropped, or hypothetical places. If a refinement asked to add a place, only claim it is included "
+            "when it actually appears in that day's confirmed stops.\n\n"
+            "Return ONLY valid JSON (no markdown, no backticks) with this exact shape:\n"
+            '{"pitch": "<4 paragraphs separated by blank lines>", '
+            '"days": [{"day_number": int, "rationale": "<2-4 sentences>", "constraint_notes": ["<short note>", ...]}]}\n\n'
+            "Rules:\n"
+            "- pitch: exactly 4 paragraphs, minimum 80 words each. Paragraph 1: destination overview and why it "
+            "fits the group. Paragraph 2: itinerary highlights naming specific days and ONLY confirmed stops. "
+            "Paragraph 3: logistics (hotel, weather, what to expect). Paragraph 4: closing hype.\n"
+            "- For every day, rationale explains why that day's confirmed stops fit the group; reference only "
+            "those stops.\n"
+            "- constraint_notes lists concrete constraints actually satisfied that day (food restrictions, pace, "
+            "avoided categories, and any requested swap that is genuinely present in the confirmed stops).\n\n"
             f"Destination: {destination_name}, {destination_state}\n"
             f"Trip dates: {state['start_date']} to {state['end_date']} "
             f"({state.get('trip_duration_days')} days)\n"
             f"Hotel: {hotel.get('name')}, ${float(hotel.get('price_per_night_usd', 0.0)):.0f} "
             f"per night, ${float(hotel.get('total_price_usd', 0.0)):.0f} total\n"
             f"Weather summary: {weather.get('summary', 'Not available')}\n"
-            f"Day plan summary:\n{day_plan_summary}\n"
+            f"Confirmed itinerary by day:\n{day_plan_summary}\n"
             f"Group size: {len(state['members'])}\n"
             f"Preference conflicts: {json.dumps(state.get('preference_conflicts', []))}\n"
             f"Natural-language preference constraints: {json.dumps(preference_constraints)}\n"
@@ -114,8 +207,9 @@ async def assemble_output(state: TripState) -> dict:
         )
 
     response = await get_llm().ainvoke(prompt)
-    return {
-        "trip_pitch": _message_text(response).strip(),
+    raw_text = _message_text(response)
+
+    result: dict[str, Any] = {
         "decision_log": [
             DecisionLogEntry(
                 node="assemble_output",
@@ -125,6 +219,16 @@ async def assemble_output(state: TripState) -> dict:
             )
         ],
     }
+
+    if days:
+        pitch, updated_days = _apply_grounded_narrative(state, raw_text)
+        result["trip_pitch"] = pitch
+        if updated_days is not None:
+            result["days"] = updated_days
+    else:
+        result["trip_pitch"] = raw_text.strip()
+
+    return result
 
 
 if __name__ == "__main__":
