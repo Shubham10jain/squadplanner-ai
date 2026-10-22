@@ -149,6 +149,19 @@ showcase/
   vercel.json                     SPA rewrites for Vercel hosting
 ```
 
+## Run with Docker
+
+The quickest way for anyone to run the app — no Python or Node install needed:
+
+```bash
+cp backend/.env_example backend/.env   # fill in your own Atlas URI, JWT secret, API keys
+docker compose up --build
+```
+
+Then open `http://localhost:5173`. Secrets stay in your local `backend/.env` and are injected at
+runtime; they are never baked into the images. See [docs/DOCKER.md](docs/DOCKER.md) for
+pulling prebuilt images from Docker Hub and for the publish checklist.
+
 ## Backend Setup
 
 From the repo root:
@@ -160,20 +173,14 @@ python -m venv .venv
 pip install -r requirements.txt
 ```
 
-Create `backend/.env` with:
+Create `backend/.env` from the template and fill in your own values (never commit it):
 
-```env
-MONGODB_URI=mongodb+srv://...
-ANTHROPIC_API_KEY=...
-SERPAPI_KEY=...
-GOOGLE_PLACES_API_KEY=...
-GOOGLE_ROUTES_API_KEY=...
-LLM_PROVIDER=anthropic
-SERPAPI_MONTHLY_HARD_LIMIT=200
-LANGCHAIN_TRACING_V2=false
-LANGCHAIN_API_KEY=
-LANGCHAIN_PROJECT=squadplanner
+```bash
+cp .env_example .env
 ```
+
+`MONGODB_URI` and `JWT_SECRET` are required (`openssl rand -hex 32` makes a good secret); the API
+keys are optional but trip generation needs an LLM key.
 
 Run the backend:
 
@@ -189,32 +196,17 @@ Useful URLs:
 
 ## Frontend Setup
 
-Run the current backend-aligned product app:
+`frontend/` is the main app. Backend routes are mounted under `/api`, which is what the frontend
+expects by default (`VITE_API_BASE_URL=http://localhost:8000/api`):
 
-```powershell
-cd showcase
-npm install
-npm run dev
-```
-
-By default, `showcase/` calls `http://127.0.0.1:8000`. To point it at a hosted backend, create
-`showcase/.env.local`:
-
-```env
-VITE_API_BASE_URL=https://your-backend.example.com
-```
-
-Run the original design-system frontend:
-
-```powershell
+```bash
 cd frontend
 npm install
 npm run dev
 ```
 
-The original `frontend/` app currently defaults API calls to `http://localhost:8000/api`, while the
-backend routes are mounted at the root, for example `/trips`. Use `showcase/` for the working
-backend-connected UI until the original app is reconciled.
+`showcase/` is the older demo app and is being retired; it still calls root-mounted routes such
+as `/trips`, so it does not work against the current backend without changes.
 
 ## Tests
 
