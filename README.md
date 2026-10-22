@@ -12,6 +12,8 @@ node, reruns only the downstream subgraph, and streams the updated itinerary bac
 
 Temporary live demo: https://ai-squad-planner-v2-0.vercel.app/
 
+**Run it yourself:** see [Run with Docker](#run-with-docker). It's one command once your `backend/.env` is filled in.
+
 The project now has three major pieces:
 
 - `backend/`: the working FastAPI + LangGraph planning API, debug UI, HITL flow, persistence,
@@ -151,16 +153,98 @@ showcase/
 
 ## Run with Docker
 
-The quickest way for anyone to run the app — no Python or Node install needed:
+This is the easiest way to run the whole app, and you don't need Python or Node installed. Docker
+runs two containers: the **backend** (FastAPI + LangGraph) and the **frontend** (the React app
+served by nginx, which also forwards `/api` calls to the backend). The database is your own
+MongoDB Atlas cluster.
+
+### 1. Install the prerequisites
+
+- [Docker Desktop](https://www.docker.com/products/docker-desktop/). Open it and wait until it
+  shows "Engine running".
+- A free [MongoDB Atlas](https://www.mongodb.com/cloud/atlas) cluster.
+- An LLM API key: Anthropic (`ANTHROPIC_API_KEY`), or Groq (`GROQ_API_KEY` with
+  `LLM_PROVIDER=groq`). Without one the app starts but can't plan trips.
+
+### 2. Get the code
 
 ```bash
-cp backend/.env_example backend/.env   # fill in your own Atlas URI, JWT secret, API keys
+git clone https://github.com/Shubham10jain/squadplanner-ai.git
+cd squadplanner-ai
+```
+
+### 3. Create your environment file
+
+```bash
+cp backend/.env_example backend/.env
+```
+
+Open `backend/.env` and fill in **your own** values. This file holds your secrets. It is
+gitignored and never copied into the Docker images. Do not commit or share it.
+
+| Variable | Required? | What to put |
+|---|---|---|
+| `MONGODB_URI` | Yes | Your Atlas connection string (`mongodb+srv://...`) |
+| `JWT_SECRET` | Yes | A random secret. Generate one with `openssl rand -hex 32` |
+| `LLM_PROVIDER` | Yes | `anthropic` or `groq` |
+| `ANTHROPIC_API_KEY` / `GROQ_API_KEY` | Yes, one of them | Key for the provider you chose |
+| `SERPAPI_KEY` | Optional | Live flights and hotels. Without it, prices are estimates |
+| `GOOGLE_PLACES_API_KEY`, `GOOGLE_ROUTES_API_KEY` | Optional | Live activities and routes |
+| `GOOGLE_CLIENT_ID` | Optional | Google sign-in. Email/password login works without it |
+| `SMTP_USER`, `SMTP_PASSWORD` | Optional | Sending invite emails |
+
+Leave `FRONTEND_URL`, `CORS_ORIGINS` and `COOKIE_SECURE` at their defaults.
+
+### 4. Allow your IP in Atlas
+
+In Atlas, open **Network Access**, then **Add IP Address**, then **Add Current IP Address**.
+Otherwise the backend can't reach the database.
+
+### 5. Start the app
+
+Make sure nothing else is using ports `5173` or `8000`. For example, stop any local
+`npm run dev` or `uvicorn` servers. Then run:
+
+```bash
 docker compose up --build
 ```
 
-Then open `http://localhost:5173`. Secrets stay in your local `backend/.env` and are injected at
-runtime; they are never baked into the images. See [docs/DOCKER.md](docs/DOCKER.md) for
-pulling prebuilt images from Docker Hub and for the publish checklist.
+The first build takes a few minutes. It's ready when the backend logs
+`Application startup complete`.
+
+### 6. Open it
+
+- App: http://localhost:5173. Register an account to get started.
+- API docs: http://127.0.0.1:8000/docs
+- Health check: http://127.0.0.1:8000/health should return `{"status":"ok","db":"connected"}`.
+
+### Everyday commands
+
+```bash
+docker compose up -d              # start in the background
+docker compose logs -f backend    # follow backend logs
+docker compose down               # stop everything
+docker compose up -d --build      # rebuild after pulling new code or editing files
+```
+
+Run the backend tests inside the container:
+
+```bash
+docker compose run --rm backend python -m pytest tests/ -q --ignore=tests/test_integration.py
+```
+
+### Troubleshooting
+
+| Problem | Fix |
+|---|---|
+| `env file backend/.env not found` | Do step 3 |
+| Backend exits with an error about `MONGODB_URI` or `JWT_SECRET` | Both are required. Fill them in `backend/.env` |
+| `/health` shows `"db":"unreachable"` | Check the Atlas URI and do step 4 |
+| `port is already allocated` | Something else is on 5173 or 8000. Stop it, or change the left-hand port in `docker-compose.yml` |
+| Changes to `backend/.env` don't apply | Run `docker compose up -d` again. Env changes need a container restart, not a rebuild |
+
+For prebuilt images from Docker Hub, Google sign-in setup, and the maintainer publish checklist,
+see [docs/DOCKER.md](docs/DOCKER.md).
 
 ## Backend Setup
 
